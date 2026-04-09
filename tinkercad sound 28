@@ -1,0 +1,202 @@
+#include <LiquidCrystal.h>
+
+// LCD pins: RS, E, D4, D5, D6, D7
+LiquidCrystal lcd(12, 11, 5, 4, 3, 10);
+
+const int dbPin = A0;
+const int freqPin1 = A1;
+const int freqPin2 = A2;
+const int buttonPin = 2;
+const int powerSwitchPin = 6;
+const int ledPin = 7;
+
+int screenMode = 0;
+bool buttonWasPressed = false;
+
+unsigned long lastSampleTime = 0;
+const unsigned long sampleInterval = 1000; // 1 second
+
+bool lastSystemOn = true;
+
+// Stored values so display stays stable between samples
+int dbValue = 30;
+int freqValue = 200;
+String noiseLevel = "Quiet";
+String freqBand = "Low";
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(buttonPin, INPUT_PULLUP);
+  pinMode(powerSwitchPin, INPUT_PULLUP);
+  pinMode(ledPin, OUTPUT);
+
+  lcd.begin(16, 2);
+  lcd.print("Sound Monitor");
+  lcd.setCursor(0, 1);
+  lcd.print("Starting...");
+  delay(1200);
+  lcd.clear();
+}
+
+void loop() {
+  // HIGH = ON, LOW = OFF
+  bool systemOn = (digitalRead(powerSwitchPin) == HIGH);
+
+  // If off, blank screen, turn LED off, and stop
+  if (!systemOn) {
+    digitalWrite(ledPin, LOW);
+
+    if (lastSystemOn) {
+      lcd.clear();
+      lastSystemOn = false;
+    }
+
+    buttonWasPressed = false;
+    delay(50);
+    return;
+  }
+
+  // System is on
+  digitalWrite(ledPin, HIGH);
+
+  // If just turned back on
+  if (!lastSystemOn) {
+    lcd.clear();
+    lastSystemOn = true;
+    updateDisplay(millis() / 1000, dbValue, freqValue, noiseLevel, freqBand);
+  }
+
+  handleButton();
+
+  unsigned long currentTime = millis();
+  unsigned long timeSec = currentTime / 1000;
+
+  // Sample every 5 seconds
+  if (currentTime - lastSampleTime >= sampleInterval) {
+    lastSampleTime = currentTime;
+
+    int dbRaw = analogRead(dbPin);
+    int freqRaw1 = analogRead(freqPin1);
+    int freqRaw2 = analogRead(freqPin2);
+
+    dbValue = map(dbRaw, 0, 1023, 30, 100);
+
+    int freqValue1 = map(freqRaw1, 0, 1023, 100, 2000);
+    int freqValue2 = map(freqRaw2, 0, 1023, 100, 2000);
+
+    // Add the two simulated frequencies together
+    freqValue = freqValue1 + freqValue2;
+
+    // Optional cap so the displayed value doesn't get too large
+    if (freqValue > 9999) {
+      freqValue = 9999;
+    }
+
+    if (dbValue < 50) {
+      noiseLevel = "Quiet";
+    }
+    else if (dbValue < 75) {
+      noiseLevel = "Moderate";
+    }
+    else {
+      noiseLevel = "Loud";
+    }
+
+    if (freqValue < 500) {
+      freqBand = "Low";
+    }
+    else if (freqValue < 2000) {
+      freqBand = "Mid";
+    }
+    else {
+      freqBand = "High";
+    }
+
+    updateDisplay(timeSec, dbValue, freqValue, noiseLevel, freqBand);
+
+    Serial.print("{");
+    Serial.print(timeSec);
+    Serial.print(", ");
+    Serial.print(dbValue);
+    Serial.print(", ");
+    Serial.print(freqValue);
+    Serial.println("}");
+  }
+}
+
+void handleButton() {
+  int buttonState = digitalRead(buttonPin);
+
+  if (buttonState == LOW && !buttonWasPressed) {
+    screenMode++;
+    if (screenMode > 2) {
+      screenMode = 0;
+    }
+
+    buttonWasPressed = true;
+    lcd.clear();
+    updateDisplay(millis() / 1000, dbValue, freqValue, noiseLevel, freqBand);
+    delay(200); // debounce
+  }
+
+  if (buttonState == HIGH) {
+    buttonWasPressed = false;
+  }
+}
+
+void updateDisplay(unsigned long timeSec, int dbValue, int freqValue, String noiseLevel, String freqBand) {
+  if (screenMode == 0) {
+    lcd.setCursor(0, 0);
+    lcd.print("Time:");
+    lcd.print(timeSec);
+    lcd.print("s     ");
+
+    lcd.setCursor(0, 1);
+    lcd.print(dbValue);
+    lcd.print(" dB ");
+    lcd.print(noiseLevel);
+
+    int used = String(dbValue).length() + 4 + noiseLevel.length();
+    for (int i = used; i < 16; i++) {
+      lcd.print(" ");
+    }
+  }
+  else if (screenMode == 1) {
+    lcd.setCursor(0, 0);
+    lcd.print("Time:");
+    lcd.print(timeSec);
+    lcd.print("s     ");
+
+    lcd.setCursor(0, 1);
+    lcd.print(freqValue);
+    lcd.print("Hz ");
+    lcd.print(freqBand);
+
+    int used = String(freqValue).length() + 3 + freqBand.length();
+    for (int i = used; i < 16; i++) {
+      lcd.print(" ");
+    }
+  }
+  else {
+    lcd.setCursor(0, 0);
+    lcd.print("t:");
+    lcd.print(timeSec);
+    lcd.print(" dB:");
+    lcd.print(dbValue);
+
+    int topUsed = 2 + String(timeSec).length() + 4 + String(dbValue).length();
+    for (int i = topUsed; i < 16; i++) {
+      lcd.print(" ");
+    }
+
+    lcd.setCursor(0, 1);
+    lcd.print("F:");
+    lcd.print(freqValue);
+
+    int bottomUsed = 2 + String(freqValue).length();
+    for (int i = bottomUsed; i < 16; i++) {
+      lcd.print(" ");
+    }
+  }
+}
